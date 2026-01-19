@@ -1,59 +1,48 @@
-# Shrike-V: 32-bit RISC-V (RV32I) Processor Implementation
+# Shrike-V: 32-bit Single-Cycle RISC-V Processor
 
-Shrike-V is a modular, single-cycle RISC-V CPU implementation designed for FPGAs. It follows the **RV32I (Base Integer)** instruction set architecture, featuring a clean separation between the datapath and the control path. This project includes both the Verilog RTL for the processor and a MicroPython-based hardware bridge for program injection.
+Shrike-V is a high-performance, open-source implementation of the **RISC-V RV32I Base Integer Instruction Set**. Designed with a focus on modularity and educational clarity, this processor follows a single-cycle execution model where every instruction—from arithmetic to memory access—is completed in one clock pulse.
 
-## 🚀 Key Features
-* **Architecture:** 32-bit Harvard Architecture (Separate Instruction and Data Memory).
-* **ISA:** Supports RV32I Base Integer Instruction Set (Arithmetic, Logical, Branching, and Load/Store).
-* **Register File:** 32 general-purpose registers (x0-x31), with x0 hardwired to zero.
-* **Bootloader:** Custom 5-byte SPI protocol for loading machine code into FPGA memory via an external host (ESP32).
-* **Modularity:** Distinct modules for ALU, Decoder, ImmGen, and Register File for easy scaling.
+##  Core Architecture (The `src` Breakdown)
 
----
+The processor is divided into distinct functional units, mirroring the standard RISC-V datapath. Each module in the `src` directory handles a critical part of the CPU's lifecycle:
 
-## 🏗️ Architecture Overview
+### 1. Instruction Fetch & Decode
+* **`InstructionMem.v`**: The primary storage for machine code. It outputs a 32-bit instruction based on the current PC.
+* **`Decoder.v`**: The control center. It parses the 7-bit opcode, `funct3`, and `funct7` fields to determine the execution path.
+* **`ImmGen.v`**: A dedicated unit to handle immediate values. It unscrambles and sign-extends bits for I-type (immediates), S-type (stores), and B-type (branches) instructions.
 
-The Shrike-V core is organized into several functional blocks that handle the Fetch-Decode-Execute cycle:
+### 2. Execution & Arithmetic
+* **`ALU.v`**: The computational engine. It performs addition, subtraction, logical shifts (SLL, SRL, SRA), and comparisons (SLT, SLTU).
+* **`RegFile.v`**: Implements the 32 general-purpose registers (`x0` through `x31`). It supports dual asynchronous reads and a single synchronous write, with `x0` hardwired to zero.
 
-| Module | Function |
-| :--- | :--- |
-| **PC.v** | Program Counter; manages the address of the current instruction. |
-| **InstructionMem.v** | Read-only memory (ROM) that stores the 32-bit machine code. |
-| **Decoder.v** | The "Brain"; parses opcodes and generates control signals for the ALU and Memory. |
-| **RegFile.v** | 32-word register file with dual-read and single-write ports. |
-| **ALU.v** | Performs 32-bit arithmetic (ADD, SUB) and logical (AND, OR, XOR, SLL) operations. |
-| **ImmGen.v** | Extracts and sign-extends immediate values from I, S, B, U, and J-type instructions. |
-| **DataMem.v** | RAM for data storage, accessed only via Load (`lw`) and Store (`sw`) instructions. |
-
-
+### 3. Memory & System Control
+* **`DataMem.v`**: Handles data persistence. It is accessed exclusively by Load and Store instructions, interfacing with the ALU for address calculation.
+* **`ControlUnit.v`**: Generates the enable signals (RegWrite, MemWrite, ALUSrc) that coordinate data movement across the chip.
 
 ---
 
-## 🔄 Execution Flow
+##  Instruction Execution Flow
 
-1.  **Fetch:** The `PC` provides the address to `InstructionMem`, which returns a 32-bit instruction.
-2.  **Decode:** The `Decoder` identifies the instruction type and tells the `RegFile` which registers to read.
-3.  **Execute:** The `ALU` receives operands from the `RegFile` or the `ImmGen` and performs the calculation.
-4.  **Memory:** If the instruction is a Load or Store, the `ALU` output acts as a memory address for `DataMem`.
-5.  **Writeback:** The final result (from the ALU or Memory) is written back to the destination register.
+The Shrike-V datapath follows a strictly linear, single-cycle flow:
+
+
+
+1.  **Fetch**: The Program Counter (PC) pulls a 32-bit instruction from `InstructionMem`.
+2.  **Decode**: The `Decoder` breaks down the instruction and the `RegFile` fetches the source operands.
+3.  **Execute**: The `ALU` calculates the result or memory address based on signals from the `ControlUnit`.
+4.  **Memory Access**: Data is read from or written to `DataMem` if the opcode is a Load or Store.
+5.  **Writeback**: The final result is muxed and written back to the `RegFile` at the rising edge of the clock.
 
 ---
 
-## 🛠️ Hardware-Software Bridge (Firmware)
+##  Hardware-Software Integration
 
-Because FPGAs are volatile, Shrike-V uses an **ESP32 master** to "inject" code into the core via SPI. The provided MicroPython firmware implements a 5-byte protocol:
+To facilitate testing on FPGA hardware (like the Shrike Lite board), the project includes a **MicroPython-based Bridge**. This allows an external controller to:
+* **Reset** the CPU state.
+* **Inject** 32-bit instructions directly into the instruction memory.
+* **Verify** execution by monitoring memory-mapped registers.
 
-* **Byte 0:** 8-bit Target Memory Address.
-* **Bytes 1-4:** 32-bit Instruction (Little-endian).
-
-### Usage Example:
-```python
-# Create the tester interface
-tester = SERVTester(spi_id=0, baudrate=1000000, cs_pin=5)
-
-# Load a simple 'addi' program
-program = [
-    0x00A00513, # addi x10, x0, 10
-    0x0000006F  # jal x0, 0 (Infinite Loop)
-]
-tester.load_program(program)
+### Sample Test Instruction:
+```assembly
+# Machine Code: 0x00A00513 
+addi x10, x0, 10  # Load decimal 10 into register x10
